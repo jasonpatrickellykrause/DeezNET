@@ -178,7 +178,7 @@ public class MusicBrainzLookup
     }
 }
 
-public class MusicBrainzIds
+public record MusicBrainzIds
 {
     public string? ReleaseId { get; set; }
     public string? ReleaseGroupId { get; set; }
