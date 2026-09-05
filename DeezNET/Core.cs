@@ -14,6 +14,8 @@ public class DeezerClient
         _clientHandler = new() { CookieContainer = new() };
         _client = new HttpClient(_clientHandler);
         _client.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.5");
+        // matches a real browser's UA; the default (blank/library) UA is an easy signal for Deezer's bot detection
+        _client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36");
 
         _gwApi = new(_client, _arl);
         _publicApi = new(_client);

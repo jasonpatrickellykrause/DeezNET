@@ -237,7 +237,7 @@ public class GWApi
         ["filter"] = "ALL"
     }, token: token);
 
-    private async Task<JToken> Call(string method, JObject? args = null, Dictionary<string, string>? parameters = null, bool needsArl = false, CancellationToken token = default)
+    private async Task<JToken> Call(string method, JObject? args = null, Dictionary<string, string>? parameters = null, bool needsArl = false, CancellationToken token = default, int retryCount = 0)
     {
         if (string.IsNullOrEmpty(_arl))
             throw new InvalidARLException("A GWApi method is attempting to be called without being provided an ARL.");
@@ -271,6 +271,13 @@ public class GWApi
             request.Headers.Add("Cookie", "arl=" + _arl);
 
         HttpResponseMessage response = await _client.SendAsync(request, token);
+
+        if (response.StatusCode == HttpStatusCode.TooManyRequests && retryCount < 3)
+        {
+            TimeSpan delay = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(Math.Pow(2, retryCount + 1));
+            await Task.Delay(delay, token);
+            return await Call(method, args, parameters, needsArl, token, retryCount + 1);
+        }
 
         string resp = await response.Content.ReadAsStringAsync(token);
         JObject json = JObject.Parse(resp);

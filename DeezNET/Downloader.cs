@@ -225,8 +225,7 @@ public class Downloader
             throw new NoSourcesAvailableException($"Track ID {trackId} has no available media sources for bitrate {bitrate}.");
         }
 
-        HttpRequestMessage message = new(HttpMethod.Get, encryptedUri);
-        HttpResponseMessage response = await _client.SendAsync(message, token);
+        HttpResponseMessage response = await SendWithRetryAsync(() => new HttpRequestMessage(HttpMethod.Get, encryptedUri), token);
         Stream stream = await response.Content.ReadAsStreamAsync(token);
 
         string blowfishKey = Decryption.GenerateBlowfishKey(trackId.ToString());
@@ -262,16 +261,16 @@ public class Downloader
         };
 
         string reqDataSerialized = JsonConvert.SerializeObject(reqData);
-        StringContent stringContent = new(reqDataSerialized);
 
-        HttpRequestMessage request = new(HttpMethod.Post, "https://media.deezer.com/v1/get_url")
+        HttpResponseMessage response = await SendWithRetryAsync(() =>
         {
-            Content = stringContent
-        };
-
-        request.Headers.Add("Cookie", "arl=" + _gw._arl);
-
-        HttpResponseMessage response = await _client.SendAsync(request, cancelToken);
+            HttpRequestMessage request = new(HttpMethod.Post, "https://media.deezer.com/v1/get_url")
+            {
+                Content = new StringContent(reqDataSerialized)
+            };
+            request.Headers.Add("Cookie", "arl=" + _gw._arl);
+            return request;
+        }, cancelToken);
 
         string resp = await response.Content.ReadAsStringAsync(cancelToken);
         JObject json = JObject.Parse(resp);
@@ -312,6 +311,23 @@ public class Downloader
         track.Tag.Lyrics = lyrics;
 
         track.Save();
+    }
+
+    /// <summary>
+    /// Sends a request built by <paramref name="requestFactory"/>, retrying with backoff if Deezer responds with 429.
+    /// A factory is required since a sent HttpRequestMessage cannot be resent.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendWithRetryAsync(Func<HttpRequestMessage> requestFactory, CancellationToken token, int maxRetries = 3)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            HttpResponseMessage response = await _client.SendAsync(requestFactory(), token);
+            if (response.StatusCode != System.Net.HttpStatusCode.TooManyRequests || attempt >= maxRetries)
+                return response;
+
+            TimeSpan delay = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(Math.Pow(2, attempt + 1));
+            await Task.Delay(delay, token);
+        }
     }
 
     private List<SyncLyrics> ParseSyncedLyrics(string syncedLyrics)
