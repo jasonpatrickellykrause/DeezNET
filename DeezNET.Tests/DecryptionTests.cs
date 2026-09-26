@@ -1,3 +1,8 @@
+using System.Text;
+using Org.BouncyCastle.Crypto;
+using Org.BouncyCastle.Crypto.Engines;
+using Org.BouncyCastle.Crypto.Modes;
+using Org.BouncyCastle.Crypto.Parameters;
 using Shouldly;
 
 namespace DeezNET.Tests
@@ -61,6 +66,65 @@ namespace DeezNET.Tests
             outStream.Read(buffer, 0, buffer.Length);
 
             buffer.ShouldBeEquivalentTo("fLaC"u8.ToArray());
+        }
+
+        [Theory]
+        [InlineData(6144 * 2)]
+        [InlineData(6144 * 2 + 100)]
+        [InlineData(6144 + 3000)]
+        [InlineData(1000)]
+        public void DecodeTrackStreamRoundTripTest(int length)
+        {
+            byte[] track = Track(length);
+            using MemoryStream stream = new(Encrypt(track, Key));
+            using MemoryStream outStream = new();
+            Decryption.DecodeTrackStream(stream, outStream, true, Key);
+
+            outStream.ToArray().ShouldBe(track);
+        }
+
+        [Fact]
+        public void DecodeTrackStreamShortReadTest()
+        {
+            byte[] track = Track(6144 * 3 + 500);
+            using ShortReadStream stream = new(Encrypt(track, Key));
+            using MemoryStream outStream = new();
+            Decryption.DecodeTrackStream(stream, outStream, true, Key);
+
+            outStream.ToArray().ShouldBe(track);
+        }
+
+        private const string Key = "fii;ih'61)r4l36c";
+
+        private static byte[] Track(int length)
+        {
+            byte[] track = new byte[length];
+            new Random(length).NextBytes(track);
+            "fLaC"u8.CopyTo(track);
+            return track;
+        }
+
+        // Deezer's layout: every third 2048-byte chunk is Blowfish-CBC encrypted, a short final chunk is not.
+        private static byte[] Encrypt(byte[] track, string key)
+        {
+            byte[] crypted = (byte[])track.Clone();
+            for (int offset = 0, chunk = 0; offset + 2048 <= crypted.Length; offset += 2048, chunk++)
+            {
+                if (chunk % 3 != 0)
+                    continue;
+
+                var cipher = new BufferedBlockCipher(new CbcBlockCipher(new BlowfishEngine()));
+                cipher.Init(true, new ParametersWithIV(new KeyParameter(Encoding.UTF8.GetBytes(key)), [0, 1, 2, 3, 4, 5, 6, 7]));
+                int len = cipher.ProcessBytes(crypted, offset, 2048, crypted, offset);
+                cipher.DoFinal(crypted, offset + len);
+            }
+
+            return crypted;
+        }
+
+        private sealed class ShortReadStream(byte[] data) : MemoryStream(data)
+        {
+            public override int Read(byte[] buffer, int offset, int count) => base.Read(buffer, offset, Math.Min(count, 1000));
         }
     }
 }

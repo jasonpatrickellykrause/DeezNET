@@ -16,29 +16,39 @@ internal static class Decryption
 
         int bytesRead;
         byte[] buffer = new byte[2048 * 3];
-        while ((bytesRead = input.Read(buffer, 0, buffer.Length)) > 0)
+        while ((bytesRead = ReadBlock(input, buffer)) > 0)
         {
             if (isCrypted && bytesRead >= 2048)
             {
-                buffer = [.. DecryptChunk(blowfishKey, buffer.AsSpan(0, 2048)), .. buffer.AsSpan(2048)];
+                DecryptChunk(blowfishKey, buffer.AsSpan(0, 2048)).CopyTo(buffer, 0);
             }
 
-            if (isStart && buffer[0] == 0 && !Encoding.UTF8.GetString(buffer, 4, 4).Equals("ftyp"))
+            int offset = 0;
+            if (isStart && bytesRead >= 8 && buffer[0] == 0 && !Encoding.UTF8.GetString(buffer, 4, 4).Equals("ftyp"))
             {
-                for (int i = 0; i < buffer.Length; i++)
-                {
-                    if (buffer[i] != 0)
-                    {
-                        buffer = new ArraySegment<byte>(buffer, i, buffer.Length - i).ToArray();
-                        break;
-                    }
-                }
+                while (offset < bytesRead && buffer[offset] == 0)
+                    offset++;
+
+                if (offset == bytesRead)
+                    offset = 0;
             }
 
             isStart = false;
 
-            output.Write(buffer, 0, buffer.Length);
+            // Only the bytes read this pass; the rest of the buffer still holds the previous block.
+            output.Write(buffer, offset, bytesRead - offset);
         }
+    }
+
+    // Fills the buffer unless the stream ends, so every block keeps the 6144-byte stripe alignment.
+    private static int ReadBlock(Stream input, byte[] buffer)
+    {
+        int total = 0;
+        int read;
+        while (total < buffer.Length && (read = input.Read(buffer, total, buffer.Length - total)) > 0)
+            total += read;
+
+        return total;
     }
 
     public static string GenerateBlowfishKey(string trackId)
