@@ -3,6 +3,38 @@
 
 A .NET Deezer API wrapper and track downloading library. There's a CLI tool in there as well.
 
+## About this fork
+This is a fork of [TrevTV/DeezNET](https://github.com/TrevTV/DeezNET). The upstream repository's last change was in May 2025, and its maintainer isn't merging pull requests. This fork keeps the library working for [Lidarr.Plugin.Deezer](https://github.com/jasonpatrickellykrause/Lidarr.Plugin.Deezer), which builds it from source as a submodule.
+
+The NuGet badge above and the package on NuGet are TrevTV's release (1.2.1). This fork isn't published to NuGet. Reference it as a project or submodule instead.
+
+The main differences from upstream:
+- Decrypted tracks no longer end with leftover bytes from the previous block.
+- The library retries a failed session or expired ARL once, then reports it, instead of retrying without limit.
+- Download failures report Deezer's error code instead of writing an error page to disk as audio.
+- The library can tag tracks with MusicBrainz IDs.
+
+## Changelog
+
+### 1.2.3
+**Fixes**
+- `DecodeTrackStream` wrote the whole 6144-byte buffer on every pass, so most tracks ended with up to 6143 stale bytes. It now writes only the bytes it read and keeps the stripe alignment when the stream returns short reads. From [TrevTV/DeezNET#4](https://github.com/TrevTV/DeezNET/pull/4).
+- When Deezer rejected the session token, `GWApi` refreshed it and retried with no limit, and refreshing from inside `deezer.getUserData` recursed. It now retries once after a short delay, never refreshes from inside `deezer.getUserData`, and throws `InvalidARLException` if the retry fails.
+- A media URL request that returns errors refreshes the license token once, then throws `APIException` with Deezer's error code.
+- `NoSourcesAvailableException` includes Deezer's per-track error code and message, which explains rights and region restrictions.
+- A non-success response from the CDN throws instead of the library decrypting it and saving it as audio. `WriteRawTrackToFile` creates the output file only after the download starts successfully.
+- `SetARL` returns early when given a blank ARL instead of setting it anyway.
+
+**New**
+- MusicBrainz ID tagging: `ApplyMetadataToFile` accepts a `MusicBrainzIds` value and writes release, release group, artist, release artist, and recording IDs. From [TrevTV/DeezNET#3](https://github.com/TrevTV/DeezNET/pull/3) by jtstothard.
+- `MusicBrainzIds.RecordingId` sets the recording ID for the current track. It takes precedence over `TrackRecordingIds`, which uses per-disc track numbers as keys and collides on multi-disc releases.
+- The blind MusicBrainz search runs only when the caller passes no `MusicBrainzIds` value. Pass an empty one to opt out.
+- Requests send a browser User-Agent.
+
+**Maintenance**
+- Dependabot opens weekly NuGet update pull requests.
+- Builds fail on high or critical NuGet advisories, including transitive packages.
+
 ## Dear Deezer
 If you would like this repository to be taken down, please send me a cease and desist.<br>
 You may e-mail it to me here: [me@trev.app](mailto:me@trev.app).
