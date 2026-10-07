@@ -14,7 +14,7 @@ public class MusicBrainzLookup
     public MusicBrainzLookup(HttpClient? client = null, string? userAgent = null)
     {
         _client = client ?? new HttpClient();
-        _userAgent = userAgent ?? "DeezNET/1.2.1 (https://github.com/TrevTV/DeezNET)";
+        _userAgent = userAgent ?? "DeezNET/1.2.3 (https://github.com/jasonpatrickellykrause/DeezNET)";
     }
 
     /// <summary>
@@ -185,6 +185,11 @@ public record MusicBrainzIds
     public string? ArtistId { get; set; }
     public string? ReleaseArtistId { get; set; }
     public Dictionary<int, string>? TrackRecordingIds { get; set; }
+
+    /// <summary>
+    /// The recording ID for the single track being tagged. Takes precedence over <see cref="TrackRecordingIds"/>.
+    /// </summary>
+    public string? RecordingId { get; set; }
 }
 
 public class MusicBrainzRelease

@@ -365,7 +365,14 @@ public class Downloader
                     track.Tag.MusicBrainzReleaseArtistId = mbids.ReleaseArtistId;
                 }
 
-                if (mbids.TrackRecordingIds != null && trackNumber > 0 &&
+                // a recording ID matched by the caller wins; TrackRecordingIds is keyed by the tag's per-disc number,
+                // which is ambiguous on multi-disc releases
+                if (!string.IsNullOrEmpty(mbids.RecordingId))
+                {
+                    track.Tag.MusicBrainzTrackId = mbids.RecordingId;
+                    tagged = true;
+                }
+                else if (mbids.TrackRecordingIds != null && trackNumber > 0 &&
                     mbids.TrackRecordingIds.TryGetValue(trackNumber, out var recordingId) &&
                     !string.IsNullOrEmpty(recordingId))
                 {
@@ -374,8 +381,10 @@ public class Downloader
                 }
             }
 
-            // Fallback: blind MusicBrainz API lookup (for standalone use outside Lidarr)
-            if (!tagged)
+            // Fallback: blind MusicBrainz API lookup (for standalone use outside Lidarr).
+            // Only when the caller supplied nothing; passing an empty MusicBrainzIds opts out, because a guessed
+            // release ID is worse than none for tools like Lidarr that trust these tags.
+            if (mbids == null && !tagged)
             {
                 var mb = new MusicBrainzLookup(_client);
                 var artistName = track.Tag.AlbumArtists.FirstOrDefault() ?? track.Tag.Performers.FirstOrDefault() ?? "";
