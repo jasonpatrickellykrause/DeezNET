@@ -89,7 +89,7 @@ public class Downloader
 
         StreamAbstraction abstraction = new("track" + ext, trackStream);
         using TagLib.File file = TagLib.File.Create(abstraction);
-        await ApplyMetadataToTagLibFile(file, trackId, coverResolution, lyrics, token);
+        await ApplyMetadataToTagLibFile(file, trackId, coverResolution, lyrics, null, token);
 
         trackStream.Seek(0, SeekOrigin.Begin);
     }
@@ -106,7 +106,7 @@ public class Downloader
 
         FileBytesAbstraction abstraction = new("track" + ext, trackData);
         using TagLib.File file = TagLib.File.Create(abstraction);
-        await ApplyMetadataToTagLibFile(file, trackId, coverResolution, lyrics, token);
+        await ApplyMetadataToTagLibFile(file, trackId, coverResolution, lyrics, null, token);
 
         byte[] finalData = abstraction.MemoryStream.ToArray();
         await abstraction.MemoryStream.DisposeAsync();
@@ -119,10 +119,10 @@ public class Downloader
     /// <param name="trackId">The track ID to base metadata on.</param>
     /// <param name="trackPath">The track path to apply the metadata to.</param>
     /// <returns>The modified track data</returns>
-    public async Task ApplyMetadataToFile(long trackId, string trackPath, int coverResolution = 512, string lyrics = "", CancellationToken token = default)
+    public async Task ApplyMetadataToFile(long trackId, string trackPath, int coverResolution = 512, string lyrics = "", MusicBrainzIds? mbids = null, CancellationToken token = default)
     {
         using TagLib.File file = TagLib.File.Create(trackPath);
-        await ApplyMetadataToTagLibFile(file, trackId, coverResolution, lyrics, token);
+        await ApplyMetadataToTagLibFile(file, trackId, coverResolution, lyrics, mbids, token);
     }
 
     /// <summary>
@@ -306,7 +306,7 @@ public class Downloader
         return json.ToObject<TrackUrls>()!;
     }
 
-    private async Task ApplyMetadataToTagLibFile(TagLib.File track, long trackId, int coverResolution = 512, string lyrics = "", CancellationToken token = default)
+    private async Task ApplyMetadataToTagLibFile(TagLib.File track, long trackId, int coverResolution = 512, string lyrics = "", MusicBrainzIds? mbids = null, CancellationToken token = default)
     {
         JToken page = await _gw.GetTrackPage(trackId, token);
         long albumId = long.Parse(page["DATA"]!["ALB_ID"]!.ToString());
@@ -331,6 +331,87 @@ public class Downloader
             track.Tag.Pictures = [new TagLib.Picture(new TagLib.ByteVector(albumArt))];
 
         track.Tag.Lyrics = lyrics;
+
+        // MusicBrainz tagging for Lidarr import compatibility.
+        // Strategy: use pre-supplied MBIDs from Lidarr's matched album (zero ambiguity),
+        // then fall back to MusicBrainz API lookup for standalone downloads.
+        try
+        {
+            var trackNumber = (int)track.Tag.Track;
+            var tagged = false;
+
+            // Prefer MBIDs supplied by the caller (from Lidarr's RemoteAlbum — already matched)
+            if (mbids != null)
+            {
+                if (!string.IsNullOrEmpty(mbids.ReleaseId))
+                {
+                    track.Tag.MusicBrainzReleaseId = mbids.ReleaseId;
+                    tagged = true;
+                }
+
+                if (!string.IsNullOrEmpty(mbids.ReleaseGroupId))
+                {
+                    track.Tag.MusicBrainzReleaseGroupId = mbids.ReleaseGroupId;
+                    tagged = true;
+                }
+
+                if (!string.IsNullOrEmpty(mbids.ArtistId))
+                {
+                    track.Tag.MusicBrainzArtistId = mbids.ArtistId;
+                }
+
+                if (!string.IsNullOrEmpty(mbids.ReleaseArtistId))
+                {
+                    track.Tag.MusicBrainzReleaseArtistId = mbids.ReleaseArtistId;
+                }
+
+                if (mbids.TrackRecordingIds != null && trackNumber > 0 &&
+                    mbids.TrackRecordingIds.TryGetValue(trackNumber, out var recordingId) &&
+                    !string.IsNullOrEmpty(recordingId))
+                {
+                    track.Tag.MusicBrainzTrackId = recordingId;
+                    tagged = true;
+                }
+            }
+
+            // Fallback: blind MusicBrainz API lookup (for standalone use outside Lidarr)
+            if (!tagged)
+            {
+                var mb = new MusicBrainzLookup(_client);
+                var artistName = track.Tag.AlbumArtists.FirstOrDefault() ?? track.Tag.Performers.FirstOrDefault() ?? "";
+                var albumName = track.Tag.Album ?? "";
+                var releaseYear = track.Tag.Year > 0 ? (int?)track.Tag.Year : null;
+
+                if (!string.IsNullOrEmpty(artistName) && !string.IsNullOrEmpty(albumName))
+                {
+                    var mbRelease = await mb.LookupReleaseAsync(artistName, albumName, releaseYear, token);
+                    if (mbRelease != null)
+                    {
+                        track.Tag.MusicBrainzReleaseId = mbRelease.ReleaseId;
+                        track.Tag.MusicBrainzReleaseGroupId = mbRelease.ReleaseGroupId;
+
+                        if (!string.IsNullOrEmpty(mbRelease.ArtistId))
+                        {
+                            track.Tag.MusicBrainzArtistId = mbRelease.ArtistId;
+                            track.Tag.MusicBrainzReleaseArtistId = mbRelease.ArtistId;
+                        }
+
+                        if (mbRelease.Tracks != null && trackNumber > 0)
+                        {
+                            var matchedTrack = mbRelease.Tracks.FirstOrDefault(t => t.Position == trackNumber);
+                            if (matchedTrack != null && !string.IsNullOrEmpty(matchedTrack.RecordingId))
+                            {
+                                track.Tag.MusicBrainzTrackId = matchedTrack.RecordingId;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // MusicBrainz lookup is best-effort; don't fail the download if it doesn't work
+        }
 
         track.Save();
     }
