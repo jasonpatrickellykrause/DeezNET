@@ -65,9 +65,10 @@ public class Downloader
     /// <param name="fallback">The secondary bitrate choice if the preferred is unavailable.</param>
     public async Task WriteRawTrackToFile(long trackId, string trackPath, Bitrate bitrate, Bitrate? fallback = null, CancellationToken token = default)
     {
-        using FileStream fileStream = File.Open(trackPath, FileMode.Create);
-
+        // fetch first so a failed request doesn't leave an empty file behind
         var (stream, blowfishKey, isCrypted) = await GetEncryptedTrackData(trackId, bitrate, fallback, token);
+
+        using FileStream fileStream = File.Open(trackPath, FileMode.Create);
         Decryption.DecodeTrackStream(stream, fileStream, isCrypted, blowfishKey);
 
         stream.Dispose();
@@ -217,16 +218,29 @@ public class Downloader
         JToken page = await _gw.GetTrackPage(trackId, token);
         TrackUrls urls = await GetTrackUrl(page["DATA"]!["TRACK_TOKEN"]!.ToString(), bitrate, token);
 
-        Uri? encryptedUri = urls.Data.FirstOrDefault()?.Media.FirstOrDefault()?.Sources.FirstOrDefault()?.Url;
+        TrackUrls.Datum? data = urls.Data?.FirstOrDefault();
+        Uri? encryptedUri = data?.Media?.FirstOrDefault()?.Sources?.FirstOrDefault()?.Url;
         if (encryptedUri == null)
         {
             if (fallback != null)
                 return await GetEncryptedTrackData(trackId, fallback.Value, token: token);
-            throw new NoSourcesAvailableException($"Track ID {trackId} has no available media sources for bitrate {bitrate}.");
+
+            // deezer explains why a track has no sources (rights, region) in a per-track error
+            TrackUrls.Error? error = data?.Errors?.FirstOrDefault();
+            string reason = error != null ? $" Deezer returned error {error.Code}: {error.Message}" : "";
+            throw new NoSourcesAvailableException($"Track ID {trackId} has no available media sources for bitrate {bitrate}.{reason}");
         }
 
         HttpRequestMessage message = new(HttpMethod.Get, encryptedUri);
         HttpResponseMessage response = await _client.SendAsync(message, token);
+
+        // an error page from the CDN would otherwise be "decrypted" and saved as audio
+        if (!response.IsSuccessStatusCode)
+        {
+            response.Dispose();
+            throw new APIException($"The Deezer CDN returned {(int)response.StatusCode} {response.ReasonPhrase} for track ID {trackId} at bitrate {bitrate}.");
+        }
+
         Stream stream = await response.Content.ReadAsStreamAsync(token);
 
         string blowfishKey = Decryption.GenerateBlowfishKey(trackId.ToString());
@@ -235,7 +249,7 @@ public class Downloader
         return (stream, blowfishKey, isCrypted);
     }
 
-    private async Task<TrackUrls> GetTrackUrl(string token, Bitrate bitrate, CancellationToken cancelToken = default)
+    private async Task<TrackUrls> GetTrackUrl(string token, Bitrate bitrate, CancellationToken cancelToken = default, bool isRetry = false)
     {
         // with the order of this being called, this should never really be needed, but it ensures safety
         if (_gw.ActiveUserData == null)
@@ -279,7 +293,14 @@ public class Downloader
         JToken? errors = json["errors"];
         if (errors != null && errors.Any())
         {
-            throw new Exception(errors[0]!["message"]!.ToString());
+            // the license token lives in the user data and expires; refresh it once before giving up
+            if (!isRetry)
+            {
+                await _gw.SetToken(cancelToken);
+                return await GetTrackUrl(token, bitrate, cancelToken, true);
+            }
+
+            throw new APIException($"Deezer media request failed with error {errors[0]!["code"]}: {errors[0]!["message"]}");
         }
 
         return json.ToObject<TrackUrls>()!;

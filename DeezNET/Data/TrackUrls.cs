@@ -12,6 +12,18 @@ public class TrackUrls
     {
         [JsonProperty("media")]
         public MediaData[] Media { get; set; }
+
+        [JsonProperty("errors")]
+        public Error[]? Errors { get; set; }
+    }
+
+    public class Error
+    {
+        [JsonProperty("code")]
+        public int Code { get; set; }
+
+        [JsonProperty("message")]
+        public string Message { get; set; }
     }
 
     public class MediaData
