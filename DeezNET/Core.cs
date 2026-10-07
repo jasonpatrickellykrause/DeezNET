@@ -14,6 +14,7 @@ public class DeezerClient
         _clientHandler = new() { CookieContainer = new() };
         _client = new HttpClient(_clientHandler);
         _client.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.5");
+        _client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", USER_AGENT);
 
         _gwApi = new(_client, _arl);
         _publicApi = new(_client);
@@ -32,6 +33,7 @@ public class DeezerClient
             _arl = "";
             _gwApi._arl = "";
             _gwApi._apiToken = "null";
+            return;
         }
 
         _arl = arl;
@@ -52,4 +54,7 @@ public class DeezerClient
     private string _arl;
     private HttpClientHandler _clientHandler;
     private readonly Uri _deezerUri = new("https://deezer.com");
+
+    // requests without a browser user agent are easy to single out as automated traffic
+    private const string USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
 }

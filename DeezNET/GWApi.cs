@@ -22,6 +22,10 @@ public class GWApi
     private readonly HttpClient _client;
     private JToken? _activeUserData;
 
+    private const string USER_DATA_METHOD = "deezer.getUserData";
+    private const int MAX_TOKEN_RETRIES = 1;
+    private static readonly TimeSpan TOKEN_RETRY_DELAY = TimeSpan.FromSeconds(2);
+
     internal async Task SetToken(CancellationToken token = default)
     {
         if (string.IsNullOrEmpty(_arl))
@@ -32,7 +36,7 @@ public class GWApi
         _apiToken = userData["checkForm"]!.ToString();
     }
 
-    public async Task<JToken> GetUserData(CancellationToken token = default) => await Call("deezer.getUserData", needsArl: true, token: token);
+    public async Task<JToken> GetUserData(CancellationToken token = default) => await Call(USER_DATA_METHOD, needsArl: true, token: token);
 
     public async Task<JToken> GetUserProfilePage(long userId, string tab, int limit = 10, CancellationToken token = default) => await Call("deezer.pageProfile", new()
     {
@@ -237,7 +241,7 @@ public class GWApi
         ["filter"] = "ALL"
     }, token: token);
 
-    private async Task<JToken> Call(string method, JObject? args = null, Dictionary<string, string>? parameters = null, bool needsArl = false, CancellationToken token = default)
+    private async Task<JToken> Call(string method, JObject? args = null, Dictionary<string, string>? parameters = null, bool needsArl = false, CancellationToken token = default, int tokenRetries = 0)
     {
         if (string.IsNullOrEmpty(_arl))
             throw new InvalidARLException("A GWApi method is attempting to be called without being provided an ARL.");
@@ -280,8 +284,17 @@ public class GWApi
         {
             if (error["VALID_TOKEN_REQUIRED"] != null || error["GATEWAY_ERROR"] != null)
             {
-                await SetToken(token);
-                return await Call(method, args, parameters, needsArl, token);
+                // retrying without a limit hammers Deezer when the ARL is dead, which is a quick way to get it flagged
+                if (tokenRetries >= MAX_TOKEN_RETRIES)
+                    throw new InvalidARLException($"Deezer rejected the session for {method} after refreshing the API token. The ARL may be invalid or expired. Response: {error}");
+
+                await Task.Delay(TOKEN_RETRY_DELAY, token);
+
+                // SetToken calls deezer.getUserData, so refreshing from inside that call would recurse
+                if (method != USER_DATA_METHOD)
+                    await SetToken(token);
+
+                return await Call(method, args, parameters, needsArl, token, tokenRetries + 1);
             }
 
             if (error["DATA_ERROR"] != null)
