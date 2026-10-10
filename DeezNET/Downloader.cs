@@ -29,6 +29,7 @@ public class Downloader
     /// <param name="trackId">The track ID to download.</param>
     /// <param name="bitrate">The preferred bitrate to download.</param>
     /// <param name="fallback">The secondary bitrate choice if the preferred is unavailable.</param>
+    /// <param name="token">Cancels the operation.</param>
     /// <returns>The raw track data as a stream.</returns>
     public async Task<Stream> GetRawTrackStream(long trackId, Bitrate bitrate, Bitrate? fallback = null, CancellationToken token = default)
     {
@@ -49,6 +50,7 @@ public class Downloader
     /// <param name="trackId">The track ID to download.</param>
     /// <param name="bitrate">The preferred bitrate to download.</param>
     /// <param name="fallback">The secondary bitrate choice if the preferred is unavailable.</param>
+    /// <param name="token">Cancels the operation.</param>
     /// <returns>The raw track data.</returns>
     public async Task<byte[]> GetRawTrackBytes(long trackId, Bitrate bitrate, Bitrate? fallback = null, CancellationToken token = default)
     {
@@ -63,6 +65,7 @@ public class Downloader
     /// <param name="trackPath">The path to write the track to.</param>
     /// <param name="bitrate">The preferred bitrate to download.</param>
     /// <param name="fallback">The secondary bitrate choice if the preferred is unavailable.</param>
+    /// <param name="token">Cancels the operation.</param>
     public async Task WriteRawTrackToFile(long trackId, string trackPath, Bitrate bitrate, Bitrate? fallback = null, CancellationToken token = default)
     {
         // fetch first so a failed request doesn't leave an empty file behind
@@ -79,6 +82,9 @@ public class Downloader
     /// </summary>
     /// <param name="trackId">The track ID to base metadata on.</param>
     /// <param name="trackStream">The track stream to apply the metadata to. Must be seekable.</param>
+    /// <param name="coverResolution">The width and height in pixels of the embedded cover art.</param>
+    /// <param name="lyrics">Plain lyrics to embed. Leave empty to embed none.</param>
+    /// <param name="token">Cancels the operation.</param>
     public async Task ApplyMetadataToTrackStream(long trackId, Stream trackStream, int coverResolution = 512, string lyrics = "", CancellationToken token = default)
     {
         byte[] magicBuffer = new byte[4];
@@ -99,6 +105,9 @@ public class Downloader
     /// </summary>
     /// <param name="trackId">The track ID to base metadata on.</param>
     /// <param name="trackData">The track byte data to apply the metadata to.</param>
+    /// <param name="coverResolution">The width and height in pixels of the embedded cover art.</param>
+    /// <param name="lyrics">Plain lyrics to embed. Leave empty to embed none.</param>
+    /// <param name="token">Cancels the operation.</param>
     /// <returns>The modified track data</returns>
     public async Task<byte[]> ApplyMetadataToTrackBytes(long trackId, byte[] trackData, int coverResolution = 512, string lyrics = "", CancellationToken token = default)
     {
@@ -118,6 +127,10 @@ public class Downloader
     /// </summary>
     /// <param name="trackId">The track ID to base metadata on.</param>
     /// <param name="trackPath">The track path to apply the metadata to.</param>
+    /// <param name="coverResolution">The width and height in pixels of the embedded cover art.</param>
+    /// <param name="lyrics">Plain lyrics to embed. Leave empty to embed none.</param>
+    /// <param name="mbids">MusicBrainz IDs to write. Pass null to look them up on MusicBrainz, or an empty set to write none.</param>
+    /// <param name="token">Cancels the operation.</param>
     /// <returns>The modified track data</returns>
     public async Task ApplyMetadataToFile(long trackId, string trackPath, int coverResolution = 512, string lyrics = "", MusicBrainzIds? mbids = null, CancellationToken token = default)
     {
@@ -128,7 +141,8 @@ public class Downloader
     /// <summary>
     /// Fetches lyrics from Deezer.
     /// </summary>
-    /// <param name="trackId">The track ID to get lyrics for.</param>=
+    /// <param name="trackId">The track ID to get lyrics for.</param>
+    /// <param name="token">Cancels the operation.</param>
     /// <returns>A tuple containing plain lyrics and synchronized lyrics.</returns>
     public async Task<(string plainLyrics, List<SyncLyrics>? syncLyrics)?> FetchLyricsFromDeezer(long trackId, CancellationToken token = default)
     {
@@ -146,10 +160,12 @@ public class Downloader
     /// <summary>
     /// Fetches lyrics from LRCLIB.
     /// </summary>
+    /// <param name="instance">The LRCLIB host name, such as lrclib.net.</param>
     /// <param name="trackName">The title of the track.</param>
     /// <param name="artistName">The name of the artist.</param>
     /// <param name="albumName">The name of the album.</param>
     /// <param name="duration">The duration of the track in seconds.</param>
+    /// <param name="token">Cancels the operation.</param>
     /// <returns>A tuple containing plain lyrics and synchronized lyrics.</returns>
     public async Task<(string plainLyrics, List<SyncLyrics>? syncLyrics)?> FetchLyricsFromLRCLIB(string instance, string trackName, string artistName, string albumName, int duration, CancellationToken token = default)
     {
@@ -171,6 +187,7 @@ public class Downloader
     /// </summary>
     /// <param name="id">The art ID.</param>
     /// <param name="resolution">The resolution for the image. Unavailable sizes will throw an UnavailableArtException.</param>
+    /// <param name="token">Cancels the operation.</param>
     /// <returns>The byte data of the art.</returns>
     /// <exception cref="UnavailableArtException">Occurs when the given art ID or resolution is unavailable.</exception>
     public async Task<byte[]> GetArtBytes(string id, int resolution, CancellationToken token = default)
