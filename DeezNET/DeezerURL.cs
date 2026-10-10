@@ -128,6 +128,7 @@ public class DeezerURL(string url, EntityType type, long id)
     /// </summary>
     /// <param name="client">The DeezerClient to use when contacting the API. No ARL is necessary.</param>
     /// <param name="topLimit">The max amount of tracks to return. Only applicable when EntityType is ArtistTop.</param>
+    /// <param name="token">Cancels the operation.</param>
     /// <returns></returns>
     public async Task<long[]> GetAssociatedTracks(DeezerClient client, int topLimit = 100, CancellationToken token = default)
     {
@@ -159,6 +160,7 @@ public class DeezerURL(string url, EntityType type, long id)
     /// </summary>
     /// <param name="client">The DeezerClient to use when contacting the API. No ARL is necessary.</param>
     /// <param name="resolution">The resolution to use in the returned cover URL.</param>
+    /// <param name="token">Cancels the operation.</param>
     /// <returns>A possibly null URL to the entity's cover.</returns>
     public async Task<string?> GetCoverUrl(DeezerClient client, int resolution, CancellationToken token = default)
     {
@@ -195,6 +197,7 @@ public class DeezerURL(string url, EntityType type, long id)
     /// Gets the title for the associated Deezer entity.
     /// </summary>
     /// <param name="client">The DeezerClient to use when contacting the API. No ARL is necessary.</param>
+    /// <param name="token">Cancels the operation.</param>
     /// <returns>A possibly null string with the title of the entity.</returns>
     public async Task<string?> GetTitle(DeezerClient client, CancellationToken token = default)
     {
