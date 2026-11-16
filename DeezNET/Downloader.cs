@@ -343,7 +343,15 @@ public class Downloader
         JToken page = await _gw.GetTrackPage(trackId, token);
         long albumId = long.Parse(page["DATA"]!["ALB_ID"]!.ToString());
         JToken albumPage = await _gw.GetAlbumPage(albumId, token);
-        JToken publicAlbum = await _publicApi.GetAlbum(albumId, token: token);
+
+        // the public API is only needed for genres, so a quota error or missing genre list shouldn't fail the whole tag write
+        string[]? genres = null;
+        try
+        {
+            JToken publicAlbum = await _publicApi.GetAlbum(albumId, token: token);
+            genres = (publicAlbum["genres"]?["data"] as JArray)?.Select(a => a["name"]?.ToString()).OfType<string>().ToArray();
+        }
+        catch (Exception e) when (e is not OperationCanceledException) { }
 
         byte[]? albumArt = null;
         try { albumArt = await GetArtBytes(page["DATA"]!["ALB_PICTURE"]!.ToString(), coverResolution, token); } catch (UnavailableArtException) { }
@@ -377,8 +385,8 @@ public class Downloader
             // the song list is incomplete or has no disc numbers, so per-disc counts can't be trusted; keep the album total
             track.Tag.TrackCount = albumTrackCount;
         }
-        // i have yet to find an album without a genre attached, but this may still break at some point
-        track.Tag.Genres = publicAlbum["genres"]!["data"]!.Select(a => a["name"]!.ToString()).ToArray();
+        if (genres != null)
+            track.Tag.Genres = genres;
 
         if (albumArt != null)
             track.Tag.Pictures = [new TagLib.Picture(new TagLib.ByteVector(albumArt))];

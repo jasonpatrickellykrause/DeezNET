@@ -16,6 +16,11 @@ The main differences from upstream:
 
 ## Changelog
 
+### 1.2.5
+**Fixes**
+- `PublicApi` retries a quota error (codes 4 and 700) up to three times, then throws `APIException`. Before, it retried every 5 seconds with no limit, so a caller waited until Deezer stopped refusing.
+- Tagging no longer fails or stalls when the public API can't return the album's genres. The track is tagged without genres. Tagging calls the public API only for genres, once per track.
+
 ### 1.2.4
 **Fixes**
 - Track downloads stream from the CDN instead of loading the whole file before decrypting it. Before, `HttpClient`'s 100-second timeout covered the entire download, so large FLACs on slow connections failed, and `GetRawTrackStream` held the track in memory twice. A stalled connection now fails with `TimeoutException` after `Downloader.ReadTimeout` (60 seconds by default) without data.
