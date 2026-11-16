@@ -36,7 +36,9 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Pin the SDK
         # the runner image has newer SDKs that would otherwise take precedence
-        run: echo '{"sdk":{"version": "${{ env.DOTNET_VERSION }}"}}' > ./global.json
+        # a block scalar, because the ": " inside the JSON would end a plain YAML value
+        run: |
+          echo '{"sdk":{"version": "${{ env.DOTNET_VERSION }}"}}' > ./global.json
       - name: Restore
         # NuGetAudit in DeezNET.csproj fails the restore on high or critical advisories, including transitive packages
         run: dotnet restore DeezNET.sln
