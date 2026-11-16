@@ -1,0 +1,50 @@
+name: Build
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+# read-only; nothing in this workflow publishes
+permissions:
+  contents: read
+
+# a newer push to the same branch or PR makes the running build pointless
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+  # same SDK as Lidarr.Plugin.Deezer, which builds this library from source
+  DOTNET_VERSION: 8.0.405
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Pin the SDK
+        # the runner image has newer SDKs that would otherwise take precedence
+        run: echo '{"sdk":{"version": "${{ env.DOTNET_VERSION }}"}}' > ./global.json
+      - name: Restore
+        # NuGetAudit in DeezNET.csproj fails the restore on high or critical advisories, including transitive packages
+        run: dotnet restore DeezNET.sln
+      - name: Build
+        run: dotnet build DeezNET.sln -c Release --no-restore
+      - name: Test
+        # tests tagged Live call Deezer and compare against data that changes, so they aren't run here
+        run: dotnet test DeezNET.Tests -c Release --no-build --filter "Category!=Live" --logger "console;verbosity=normal"
+      - name: List vulnerable packages
+        # restore already fails on high and critical; this shows moderate and low ones in the log too
+        run: dotnet list DeezNET.sln package --vulnerable --include-transitive

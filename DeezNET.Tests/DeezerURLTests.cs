@@ -46,6 +46,8 @@ namespace DeezNET.Tests
 
 
         // i don't know if these short urls expire
+        // calls Deezer, so CI skips it with --filter "Category!=Live"
+        [Trait("Category", "Live")]
         [Theory]
         [InlineData("https://deezer.page.link/PjpK8Ywdavbpn9FA8", "https://www.deezer.com/track/29373181?host=3103984544&utm_campaign=clipboard-generic&utm_source=user_sharing&utm_content=track-29373181&deferredFl=1")]
         [InlineData("https://deezer.page.link/27ms3uwmnFK63wsQ6", "https://www.deezer.com/album/548556802?host=3103984544&utm_campaign=clipboard-generic&utm_source=user_sharing&utm_content=album-548556802&deferredFl=1")]
@@ -57,6 +59,8 @@ namespace DeezNET.Tests
         }
 
         // it's very possible for the Artist and ArtistTop values to change later
+        // calls Deezer, so CI skips it with --filter "Category!=Live"
+        [Trait("Category", "Live")]
         [Theory]
         [InlineData("https://www.deezer.com/en/track/13787884", new long[] { 13787884 })]
         [InlineData("https://www.deezer.com/en/album/509603971", new long[] { 2531592621, 2531592631, 2531592641, 2531592651, 2531592661 })]
