@@ -10,34 +10,67 @@ namespace DeezNET;
 
 internal static class Decryption
 {
+    private const int BLOCK_SIZE = 2048 * 3;
+
     public static void DecodeTrackStream(Stream input, Stream output, bool isCrypted, string blowfishKey)
     {
         bool isStart = true;
 
         int bytesRead;
-        byte[] buffer = new byte[2048 * 3];
+        byte[] buffer = new byte[BLOCK_SIZE];
         while ((bytesRead = ReadBlock(input, buffer)) > 0)
         {
-            if (isCrypted && bytesRead >= 2048)
-            {
-                DecryptChunk(blowfishKey, buffer.AsSpan(0, 2048)).CopyTo(buffer, 0);
-            }
-
-            int offset = 0;
-            if (isStart && bytesRead >= 8 && buffer[0] == 0 && !Encoding.UTF8.GetString(buffer, 4, 4).Equals("ftyp"))
-            {
-                while (offset < bytesRead && buffer[offset] == 0)
-                    offset++;
-
-                if (offset == bytesRead)
-                    offset = 0;
-            }
-
+            int offset = DecodeBlock(buffer, bytesRead, isCrypted, blowfishKey, isStart);
             isStart = false;
 
             // Only the bytes read this pass; the rest of the buffer still holds the previous block.
             output.Write(buffer, offset, bytesRead - offset);
         }
+    }
+
+    /// <summary>
+    /// Decodes a track stream without blocking, so a slow or stalled download can be cancelled.
+    /// </summary>
+    /// <param name="input">The encrypted track data.</param>
+    /// <param name="output">The stream to write the decoded track to.</param>
+    /// <param name="isCrypted">Whether the track data is encrypted.</param>
+    /// <param name="blowfishKey">The track's Blowfish key.</param>
+    /// <param name="readTimeout">The longest to wait for more data before giving up with a <see cref="TimeoutException"/>. Null waits indefinitely.</param>
+    /// <param name="token">Cancels the operation.</param>
+    public static async Task DecodeTrackStreamAsync(Stream input, Stream output, bool isCrypted, string blowfishKey, TimeSpan? readTimeout = null, CancellationToken token = default)
+    {
+        bool isStart = true;
+
+        int bytesRead;
+        byte[] buffer = new byte[BLOCK_SIZE];
+        while ((bytesRead = await ReadBlockAsync(input, buffer, readTimeout, token)) > 0)
+        {
+            int offset = DecodeBlock(buffer, bytesRead, isCrypted, blowfishKey, isStart);
+            isStart = false;
+
+            await output.WriteAsync(buffer.AsMemory(offset, bytesRead - offset), token);
+        }
+    }
+
+    // Decrypts the block in place and returns where its audio starts.
+    private static int DecodeBlock(byte[] buffer, int bytesRead, bool isCrypted, string blowfishKey, bool isStart)
+    {
+        if (isCrypted && bytesRead >= 2048)
+        {
+            DecryptChunk(blowfishKey, buffer.AsSpan(0, 2048)).CopyTo(buffer, 0);
+        }
+
+        int offset = 0;
+        if (isStart && bytesRead >= 8 && buffer[0] == 0 && !Encoding.UTF8.GetString(buffer, 4, 4).Equals("ftyp"))
+        {
+            while (offset < bytesRead && buffer[offset] == 0)
+                offset++;
+
+            if (offset == bytesRead)
+                offset = 0;
+        }
+
+        return offset;
     }
 
     // Fills the buffer unless the stream ends, so every block keeps the 6144-byte stripe alignment.
@@ -47,6 +80,37 @@ internal static class Decryption
         int read;
         while (total < buffer.Length && (read = input.Read(buffer, total, buffer.Length - total)) > 0)
             total += read;
+
+        return total;
+    }
+
+    private static async Task<int> ReadBlockAsync(Stream input, byte[] buffer, TimeSpan? readTimeout, CancellationToken token)
+    {
+        using CancellationTokenSource readCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+
+        int total = 0;
+        while (total < buffer.Length)
+        {
+            // restarted for every read, so it limits how long the connection can stall, not how long the whole track takes
+            if (readTimeout != null)
+                readCts.CancelAfter(readTimeout.Value);
+
+            int read;
+            try
+            {
+                read = await input.ReadAsync(buffer.AsMemory(total, buffer.Length - total), readCts.Token);
+            }
+            catch (OperationCanceledException) when (!token.IsCancellationRequested)
+            {
+                // a timeout rather than a cancellation, so callers that ignore cancellations still see a failure
+                throw new TimeoutException($"No data was received for {readTimeout!.Value.TotalSeconds} seconds.");
+            }
+
+            if (read == 0)
+                break;
+
+            total += read;
+        }
 
         return total;
     }

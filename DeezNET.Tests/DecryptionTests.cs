@@ -94,6 +94,52 @@ namespace DeezNET.Tests
             outStream.ToArray().ShouldBe(track);
         }
 
+        [Theory]
+        [InlineData(6144 * 2)]
+        [InlineData(6144 * 2 + 100)]
+        [InlineData(6144 + 3000)]
+        [InlineData(1000)]
+        public async Task DecodeTrackStreamAsyncRoundTripTest(int length)
+        {
+            byte[] track = Track(length);
+            using MemoryStream stream = new(Encrypt(track, Key));
+            using MemoryStream outStream = new();
+            await Decryption.DecodeTrackStreamAsync(stream, outStream, true, Key, TimeSpan.FromSeconds(5));
+
+            outStream.ToArray().ShouldBe(track);
+        }
+
+        [Fact]
+        public async Task DecodeTrackStreamAsyncShortReadTest()
+        {
+            byte[] track = Track(6144 * 3 + 500);
+            using ShortReadStream stream = new(Encrypt(track, Key));
+            using MemoryStream outStream = new();
+            await Decryption.DecodeTrackStreamAsync(stream, outStream, true, Key, TimeSpan.FromSeconds(5));
+
+            outStream.ToArray().ShouldBe(track);
+        }
+
+        [Fact]
+        public async Task DecodeTrackStreamAsyncStallTimesOutTest()
+        {
+            using StalledStream stream = new();
+            using MemoryStream outStream = new();
+
+            await Should.ThrowAsync<TimeoutException>(() => Decryption.DecodeTrackStreamAsync(stream, outStream, true, Key, TimeSpan.FromMilliseconds(200)));
+        }
+
+        [Fact]
+        public async Task DecodeTrackStreamAsyncCancellationIsNotATimeoutTest()
+        {
+            using StalledStream stream = new();
+            using MemoryStream outStream = new();
+            using CancellationTokenSource cts = new(TimeSpan.FromMilliseconds(200));
+
+            // a TaskCanceledException is fine too; what matters is that it isn't reported as a timeout
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Decryption.DecodeTrackStreamAsync(stream, outStream, true, Key, TimeSpan.FromSeconds(30), cts.Token));
+        }
+
         private const string Key = "fii;ih'61)r4l36c";
 
         private static byte[] Track(int length)
@@ -125,6 +171,18 @@ namespace DeezNET.Tests
         private sealed class ShortReadStream(byte[] data) : MemoryStream(data)
         {
             public override int Read(byte[] buffer, int offset, int count) => base.Read(buffer, offset, Math.Min(count, 1000));
+
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) => base.ReadAsync(buffer[..Math.Min(buffer.Length, 1000)], cancellationToken);
+        }
+
+        // a connection that stays open but never sends anything
+        private sealed class StalledStream : MemoryStream
+        {
+            public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+                return 0;
+            }
         }
     }
 }
