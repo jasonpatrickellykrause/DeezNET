@@ -14,7 +14,8 @@ public class MusicBrainzLookup
     public MusicBrainzLookup(HttpClient? client = null, string? userAgent = null)
     {
         _client = client ?? new HttpClient();
-        _userAgent = userAgent ?? "DeezNET/1.2.5 (https://github.com/jasonpatrickellykrause/DeezNET)";
+        // from the assembly, so it can't drift from <Version> in Directory.Build.props
+        _userAgent = userAgent ?? $"DeezNET/{typeof(MusicBrainzLookup).Assembly.GetName().Version?.ToString(3) ?? "0.0.0"} (https://github.com/jasonpatrickellykrause/DeezNET)";
     }
 
     /// <summary>
@@ -36,7 +37,7 @@ public class MusicBrainzLookup
 
         try
         {
-            var response = await _client.SendAsync(request, token);
+            using var response = await _client.SendAsync(request, token);
             if (!response.IsSuccessStatusCode)
             {
                 return null;
@@ -75,7 +76,7 @@ public class MusicBrainzLookup
 
             return null;
         }
-        catch
+        catch (Exception) when (!token.IsCancellationRequested)
         {
             return null;
         }
@@ -95,7 +96,7 @@ public class MusicBrainzLookup
 
         try
         {
-            var response = await _client.SendAsync(request, token);
+            using var response = await _client.SendAsync(request, token);
             if (!response.IsSuccessStatusCode)
             {
                 return null;
@@ -112,7 +113,7 @@ public class MusicBrainzLookup
 
             return recordings[0].GetProperty("id").GetString();
         }
-        catch
+        catch (Exception) when (!token.IsCancellationRequested)
         {
             return null;
         }
@@ -174,7 +175,9 @@ public class MusicBrainzLookup
 
     private static string EscapeSearch(string input)
     {
-        return input.Replace("\"", "\\\"");
+        // backslashes first, or the ones added for quotes would be escaped again; a trailing backslash would
+        // otherwise escape the closing quote of the phrase
+        return input.Replace("\\", "\\\\").Replace("\"", "\\\"");
     }
 }
 

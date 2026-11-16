@@ -117,9 +117,11 @@ public class DeezerURL(string url, EntityType type, long id)
     public static string UnshortenURL(string url)
     {
         HttpRequestMessage req = new(HttpMethod.Get, url);
-        HttpResponseMessage resp = _httpClient.Send(req);
+        using HttpResponseMessage resp = _httpClient.Send(req);
 
-        string? target = resp.StatusCode == System.Net.HttpStatusCode.Redirect ? resp.Headers.Location?.OriginalString : null;
+        // any redirect status, not just 302; link shorteners also answer with 301, 303, 307, or 308
+        int status = (int)resp.StatusCode;
+        string? target = status >= 300 && status < 400 ? resp.Headers.Location?.OriginalString : null;
         return target ?? throw new InvalidURLException($"{url} did not provide a redirect Location header.");
     }
 

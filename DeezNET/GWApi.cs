@@ -174,13 +174,13 @@ public class GWApi
 
     public async Task<JToken> AddSongToPlaylist(long playlistId, long trackId, int offset = -1, CancellationToken token = default) => await AddSongsToPlaylist(playlistId, [trackId], offset, token);
 
-    public async Task<JToken> RemoveSongsFromPlaylist(long playlistId, long[] trackIds) => await Call("playlist.deleteSongs", new()
+    public async Task<JToken> RemoveSongsFromPlaylist(long playlistId, long[] trackIds, CancellationToken token = default) => await Call("playlist.deleteSongs", new()
     {
         ["PLAYLIST_ID"] = playlistId,
         ["songs"] = new JArray(trackIds.Select(t => new JArray(t.ToString(), 0))),
-    });
+    }, token: token);
 
-    public async Task<JToken> RemoveSongFromPlaylist(long playlistId, long trackId, CancellationToken token = default) => await RemoveSongsFromPlaylist(playlistId, [trackId]);
+    public async Task<JToken> RemoveSongFromPlaylist(long playlistId, long trackId, CancellationToken token = default) => await RemoveSongsFromPlaylist(playlistId, [trackId], token);
 
     public async Task<JToken> DeletePlaylist(long playlistId, CancellationToken token = default) => await Call("playlist.delete", new()
     {
@@ -303,7 +303,7 @@ public class GWApi
         if (needsArl)
             request.Headers.Add("Cookie", "arl=" + _arl);
 
-        HttpResponseMessage response = await _client.SendAsync(request, token);
+        using HttpResponseMessage response = await _client.SendAsync(request, token);
 
         string resp = await response.Content.ReadAsStringAsync(token);
         JObject json = JObject.Parse(resp);
