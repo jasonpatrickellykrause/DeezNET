@@ -16,6 +16,18 @@ The main differences from upstream:
 
 ## Changelog
 
+### 1.2.6
+**Fixes**
+- When the session expires during concurrent requests, the library refreshes the token once and the other requests reuse it. Before, each request refreshed it separately, sending a burst of `deezer.getUserData` calls at once. `SetARL` always refreshes, so a new ARL gets its own session.
+- Downloading without an ARL throws `InvalidARLException` instead of a `NullReferenceException`.
+- HTTP responses are disposed after use, which returns their connections to the pool sooner.
+- `UnshortenURL` follows any redirect status, not only 302.
+- Cancelling during the MusicBrainz lookup cancels the operation instead of being treated as a failed lookup.
+- MusicBrainz searches escape backslashes in artist and album names.
+- `ApplyMetadataToTrackStream` reads all four format bytes even when the stream returns them in parts, so it no longer misdetects a FLAC as an MP3.
+- `RemoveSongsFromPlaylist` and `RemoveSongFromPlaylist` pass their cancellation token to the request.
+- The MusicBrainz user agent takes its version from the assembly, so it no longer needs updating by hand.
+
 ### 1.2.5
 **Fixes**
 - `PublicApi` retries a quota error (codes 4 and 700) up to three times, then throws `APIException`. Before, it retried every 5 seconds with no limit, so a caller waited until Deezer stopped refusing.

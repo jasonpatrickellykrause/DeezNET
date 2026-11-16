@@ -26,14 +26,42 @@ public class GWApi
     private const int MAX_TOKEN_RETRIES = 1;
     private static readonly TimeSpan TOKEN_RETRY_DELAY = TimeSpan.FromSeconds(2);
 
-    internal async Task SetToken(CancellationToken token = default)
+    // one refresh at a time; concurrent downloads that all hit an expired session would otherwise each call
+    // deezer.getUserData at once, which is the kind of burst that gets an ARL flagged
+    private readonly SemaphoreSlim _tokenLock = new(1, 1);
+    private long _tokenVersion;
+
+    // incremented after each successful refresh, so callers can tell whether their token is still the current one
+    internal long TokenVersion => Interlocked.Read(ref _tokenVersion);
+
+    /// <summary>
+    /// Refreshes the API token and user data.
+    /// </summary>
+    /// <param name="token">Cancels the operation.</param>
+    /// <param name="force">Refresh even if another caller already refreshed, such as after the ARL changes.</param>
+    /// <param name="staleVersion">The <see cref="TokenVersion"/> the caller's failed request used. Defaults to the current version.</param>
+    internal async Task SetToken(CancellationToken token = default, bool force = false, long? staleVersion = null)
     {
         if (string.IsNullOrEmpty(_arl))
             return;
 
-        JToken userData = await GetUserData(token);
-        _activeUserData = userData;
-        _apiToken = userData["checkForm"]!.ToString();
+        long versionSeen = staleVersion ?? TokenVersion;
+        await _tokenLock.WaitAsync(token);
+        try
+        {
+            // a caller refreshing a stale token can reuse a refresh that finished after its request was sent
+            if (!force && TokenVersion != versionSeen)
+                return;
+
+            JToken userData = await GetUserData(token);
+            _activeUserData = userData;
+            _apiToken = userData["checkForm"]!.ToString();
+            Interlocked.Increment(ref _tokenVersion);
+        }
+        finally
+        {
+            _tokenLock.Release();
+        }
     }
 
     public async Task<JToken> GetUserData(CancellationToken token = default) => await Call(USER_DATA_METHOD, needsArl: true, token: token);
@@ -146,13 +174,13 @@ public class GWApi
 
     public async Task<JToken> AddSongToPlaylist(long playlistId, long trackId, int offset = -1, CancellationToken token = default) => await AddSongsToPlaylist(playlistId, [trackId], offset, token);
 
-    public async Task<JToken> RemoveSongsFromPlaylist(long playlistId, long[] trackIds) => await Call("playlist.deleteSongs", new()
+    public async Task<JToken> RemoveSongsFromPlaylist(long playlistId, long[] trackIds, CancellationToken token = default) => await Call("playlist.deleteSongs", new()
     {
         ["PLAYLIST_ID"] = playlistId,
         ["songs"] = new JArray(trackIds.Select(t => new JArray(t.ToString(), 0))),
-    });
+    }, token: token);
 
-    public async Task<JToken> RemoveSongFromPlaylist(long playlistId, long trackId, CancellationToken token = default) => await RemoveSongsFromPlaylist(playlistId, [trackId]);
+    public async Task<JToken> RemoveSongFromPlaylist(long playlistId, long trackId, CancellationToken token = default) => await RemoveSongsFromPlaylist(playlistId, [trackId], token);
 
     public async Task<JToken> DeletePlaylist(long playlistId, CancellationToken token = default) => await Call("playlist.delete", new()
     {
@@ -247,6 +275,7 @@ public class GWApi
             throw new InvalidARLException("A GWApi method is attempting to be called without being provided an ARL.");
 
         parameters ??= [];
+        long tokenVersion = TokenVersion;
         parameters["api_version"] = "1.0";
         parameters["api_token"] = _apiToken;
         parameters["input"] = "3";
@@ -274,7 +303,7 @@ public class GWApi
         if (needsArl)
             request.Headers.Add("Cookie", "arl=" + _arl);
 
-        HttpResponseMessage response = await _client.SendAsync(request, token);
+        using HttpResponseMessage response = await _client.SendAsync(request, token);
 
         string resp = await response.Content.ReadAsStringAsync(token);
         JObject json = JObject.Parse(resp);
@@ -290,9 +319,10 @@ public class GWApi
 
                 await Task.Delay(TOKEN_RETRY_DELAY, token);
 
-                // SetToken calls deezer.getUserData, so refreshing from inside that call would recurse
+                // SetToken calls deezer.getUserData, so refreshing from inside that call would recurse (and deadlock on
+                // the token lock); other calls reuse a refresh that another caller made after this request was sent
                 if (method != USER_DATA_METHOD)
-                    await SetToken(token);
+                    await SetToken(token, staleVersion: tokenVersion);
 
                 return await Call(method, args, parameters, needsArl, token, tokenRetries + 1);
             }

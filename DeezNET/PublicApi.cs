@@ -382,7 +382,7 @@ public class PublicApi
         string url = stringBuilder.ToString();
 
         HttpRequestMessage request = new(HttpMethod.Get, url);
-        HttpResponseMessage response = await _client.SendAsync(request, token);
+        using HttpResponseMessage response = await _client.SendAsync(request, token);
 
         string resp = await response.Content.ReadAsStringAsync(token);
         JObject json = JObject.Parse(resp);

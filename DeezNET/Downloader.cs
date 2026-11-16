@@ -93,8 +93,12 @@ public class Downloader
     /// <param name="token">Cancels the operation.</param>
     public async Task ApplyMetadataToTrackStream(long trackId, Stream trackStream, int coverResolution = 512, string lyrics = "", CancellationToken token = default)
     {
+        // a single read can return fewer than 4 bytes, which would misdetect a FLAC as an MP3
         byte[] magicBuffer = new byte[4];
-        await trackStream.ReadAsync(magicBuffer.AsMemory(0, 4), token);
+        int magicRead = 0;
+        int read;
+        while (magicRead < magicBuffer.Length && (read = await trackStream.ReadAsync(magicBuffer.AsMemory(magicRead), token)) > 0)
+            magicRead += read;
         string ext = Enumerable.SequenceEqual(magicBuffer, FLAC_MAGIC) ? ".flac" : ".mp3";
 
         trackStream.Seek(0, SeekOrigin.Begin);
@@ -176,7 +180,7 @@ public class Downloader
     public async Task<(string plainLyrics, List<SyncLyrics>? syncLyrics)?> FetchLyricsFromLRCLIB(string instance, string trackName, string artistName, string albumName, int duration, CancellationToken token = default)
     {
         var requestUrl = $"https://{instance}/api/get?artist_name={Uri.EscapeDataString(artistName)}&track_name={Uri.EscapeDataString(trackName)}&album_name={Uri.EscapeDataString(albumName)}&duration={duration}";
-        var response = await _client.GetAsync(requestUrl, token);
+        using var response = await _client.GetAsync(requestUrl, token);
 
         if (response.IsSuccessStatusCode)
         {
@@ -287,9 +291,13 @@ public class Downloader
         if (_gw.ActiveUserData == null)
             await _gw.SetToken(cancelToken);
 
+        // SetToken does nothing without an ARL, which used to surface as a NullReferenceException below
+        JToken userData = _gw.ActiveUserData ?? throw new InvalidARLException("Downloading requires an ARL. Call DeezerClient.SetARL first.");
+        long tokenVersion = _gw.TokenVersion;
+
         GetUrlRequestBody reqData = new()
         {
-            LicenseToken = _gw.ActiveUserData!["USER"]!["OPTIONS"]!["license_token"]!.ToString(),
+            LicenseToken = userData["USER"]!["OPTIONS"]!["license_token"]!.ToString(),
             TrackTokens = [token],
             Media =
             [
@@ -317,7 +325,7 @@ public class Downloader
 
         request.Headers.Add("Cookie", "arl=" + _gw._arl);
 
-        HttpResponseMessage response = await _client.SendAsync(request, cancelToken);
+        using HttpResponseMessage response = await _client.SendAsync(request, cancelToken);
 
         string resp = await response.Content.ReadAsStringAsync(cancelToken);
         JObject json = JObject.Parse(resp);
@@ -328,7 +336,7 @@ public class Downloader
             // the license token lives in the user data and expires; refresh it once before giving up
             if (!isRetry)
             {
-                await _gw.SetToken(cancelToken);
+                await _gw.SetToken(cancelToken, staleVersion: tokenVersion);
                 return await GetTrackUrl(token, bitrate, cancelToken, true);
             }
 
@@ -478,7 +486,7 @@ public class Downloader
                 }
             }
         }
-        catch (Exception)
+        catch (Exception e) when (e is not OperationCanceledException)
         {
             // MusicBrainz lookup is best-effort; don't fail the download if it doesn't work
         }
