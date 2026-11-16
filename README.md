@@ -16,6 +16,22 @@ The main differences from upstream:
 
 ## Changelog
 
+### 1.2.4
+**Fixes**
+- Track downloads stream from the CDN instead of loading the whole file before decrypting it. Before, `HttpClient`'s 100-second timeout covered the entire download, so large FLACs on slow connections failed, and `GetRawTrackStream` held the track in memory twice. A stalled connection now fails with `TimeoutException` after `Downloader.ReadTimeout` (60 seconds by default) without data.
+- `GetArtBytes` throws `UnavailableArtException` for any unsuccessful CDN response and for an empty art ID. Before, only a 401 threw, and other error pages were embedded in tracks as cover art.
+- A release date of `0000-00-00` no longer stops a track from being tagged. The year falls back to the album's release dates, and is left out if none are valid.
+- Tracks are tagged with their disc number. On multi-disc albums, the track count and disc count are per disc when Deezer returns the full track list. Before, tracks with the same number on different discs got identical tags.
+
+**New**
+- `Decryption.DecodeTrackStreamAsync` decodes without blocking and supports cancellation and a read timeout.
+
+**Maintenance**
+- Pull requests and pushes to `main` build the solution and run the tests. Tests tagged `Live` call Deezer and only run locally.
+- CodeQL scans the C# code and the workflows on every pull request and weekly.
+- Pull requests fail if they add a dependency with a high or critical advisory.
+- Dependabot also updates the pinned GitHub Actions, and groups test package updates into one pull request.
+
 ### 1.2.3
 **Fixes**
 - `DecodeTrackStream` wrote the whole 6144-byte buffer on every pass, so most tracks ended with up to 6143 stale bytes. It now writes only the bytes it read and keeps the stripe alignment when the stream returns short reads. From [TrevTV/DeezNET#4](https://github.com/TrevTV/DeezNET/pull/4).

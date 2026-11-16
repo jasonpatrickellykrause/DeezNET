@@ -1,6 +1,6 @@
 ﻿<Project>
   <PropertyGroup>
-    <Version>1.2.3</Version>
+    <Version>1.2.4</Version>
     <Company>TrevTV</Company>
     <Copyright>Copyright (C) Trevor Jackson</Copyright>
     <LangVersion>latest</LangVersion>

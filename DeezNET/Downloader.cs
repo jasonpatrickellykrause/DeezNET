@@ -24,6 +24,12 @@ public class Downloader
     private readonly byte[] FLAC_MAGIC = "fLaC"u8.ToArray();
 
     /// <summary>
+    /// How long a track download can go without receiving data before it fails with a <see cref="TimeoutException"/>.
+    /// This limits stalls, not the length of the download. Null waits indefinitely.
+    /// </summary>
+    public TimeSpan? ReadTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>
     /// Downloads and decrypts track data for a given ID and bitrate.
     /// </summary>
     /// <param name="trackId">The track ID to download.</param>
@@ -36,9 +42,8 @@ public class Downloader
         MemoryStream outStream = new();
 
         var (stream, blowfishKey, isCrypted) = await GetEncryptedTrackData(trackId, bitrate, fallback, token);
-        Decryption.DecodeTrackStream(stream, outStream, isCrypted, blowfishKey);
-
-        stream.Dispose();
+        using (stream)
+            await Decryption.DecodeTrackStreamAsync(stream, outStream, isCrypted, blowfishKey, ReadTimeout, token);
 
         outStream.Seek(0, SeekOrigin.Begin);
         return outStream;
@@ -71,10 +76,11 @@ public class Downloader
         // fetch first so a failed request doesn't leave an empty file behind
         var (stream, blowfishKey, isCrypted) = await GetEncryptedTrackData(trackId, bitrate, fallback, token);
 
-        using FileStream fileStream = File.Open(trackPath, FileMode.Create);
-        Decryption.DecodeTrackStream(stream, fileStream, isCrypted, blowfishKey);
-
-        stream.Dispose();
+        using (stream)
+        {
+            using FileStream fileStream = new(trackPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, useAsync: true);
+            await Decryption.DecodeTrackStreamAsync(stream, fileStream, isCrypted, blowfishKey, ReadTimeout, token);
+        }
     }
 
     /// <summary>
@@ -192,12 +198,18 @@ public class Downloader
     /// <exception cref="UnavailableArtException">Occurs when the given art ID or resolution is unavailable.</exception>
     public async Task<byte[]> GetArtBytes(string id, int resolution, CancellationToken token = default)
     {
-        HttpRequestMessage message = new(HttpMethod.Get, GetCDNUrl(id, resolution));
-        HttpResponseMessage response = await _client.SendAsync(message, token);
+        // tracks without art have an empty picture ID, which would request a malformed CDN path
+        if (string.IsNullOrWhiteSpace(id))
+            throw new UnavailableArtException("No art ID was provided.");
 
-        if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        HttpRequestMessage message = new(HttpMethod.Get, GetCDNUrl(id, resolution));
+        using HttpResponseMessage response = await _client.SendAsync(message, token);
+
+        // the CDN answers a missing size with 401 or 403 and other failures with an error page; any of those would
+        // otherwise be embedded in the track as its cover
+        if (!response.IsSuccessStatusCode)
         {
-            throw new UnavailableArtException($"The art with {id} with resolution {resolution} is unavailable.");
+            throw new UnavailableArtException($"The art with {id} with resolution {resolution} is unavailable. The CDN returned {(int)response.StatusCode} {response.ReasonPhrase}.");
         }
 
         return await response.Content.ReadAsByteArrayAsync(token);
@@ -248,8 +260,11 @@ public class Downloader
             throw new NoSourcesAvailableException($"Track ID {trackId} has no available media sources for bitrate {bitrate}.{reason}");
         }
 
+        // stream the body instead of buffering it; with the default option HttpClient.Timeout (100 seconds) covers the
+        // whole download, so large FLACs on slow connections time out, and the track is held in memory twice.
+        // Stalls are caught by ReadTimeout while decoding instead.
         HttpRequestMessage message = new(HttpMethod.Get, encryptedUri);
-        HttpResponseMessage response = await _client.SendAsync(message, token);
+        HttpResponseMessage response = await _client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, token);
 
         // an error page from the CDN would otherwise be "decrypted" and saved as audio
         if (!response.IsSuccessStatusCode)
@@ -337,10 +352,31 @@ public class Downloader
         track.Tag.Album = page["DATA"]!["ALB_TITLE"]!.ToString();
         track.Tag.Performers = page["DATA"]!["ARTISTS"]!.Select(a => a["ART_NAME"]!.ToString()).ToArray();
         track.Tag.AlbumArtists = albumPage["DATA"]!["ARTISTS"]!.Select(a => a["ART_NAME"]!.ToString()).ToArray();
-        DateTime releaseDate = DateTime.Parse(page["DATA"]!["PHYSICAL_RELEASE_DATE"]!.ToString());
-        track.Tag.Year = (uint)releaseDate.Year;
+        // deezer sends 0000-00-00 for some releases; skip the year rather than fail the whole tag write
+        uint? year = ParseYear(page["DATA"]?["PHYSICAL_RELEASE_DATE"])
+            ?? ParseYear(albumPage["DATA"]?["PHYSICAL_RELEASE_DATE"])
+            ?? ParseYear(albumPage["DATA"]?["ORIGINAL_RELEASE_DATE"]);
+        if (year != null)
+            track.Tag.Year = year.Value;
+
+        // TRACK_NUMBER restarts on each disc, so without the disc number tracks on different discs get identical tags
         track.Tag.Track = uint.Parse(page["DATA"]!["TRACK_NUMBER"]!.ToString());
-        track.Tag.TrackCount = uint.Parse(albumPage["SONGS"]!["total"]!.ToString());
+        uint disc = ParsePositive(page["DATA"]?["DISK_NUMBER"]) ?? 1;
+        track.Tag.Disc = disc;
+
+        uint albumTrackCount = uint.Parse(albumPage["SONGS"]!["total"]!.ToString());
+        uint[]? songDiscs = (albumPage["SONGS"]?["data"] as JArray)?.Select(s => ParsePositive(s["DISK_NUMBER"]) ?? 1).ToArray();
+        uint discTrackCount = songDiscs != null && songDiscs.Length == albumTrackCount ? (uint)songDiscs.Count(d => d == disc) : 0;
+        if (discTrackCount > 0)
+        {
+            track.Tag.TrackCount = discTrackCount;
+            track.Tag.DiscCount = songDiscs!.Max();
+        }
+        else
+        {
+            // the song list is incomplete or has no disc numbers, so per-disc counts can't be trusted; keep the album total
+            track.Tag.TrackCount = albumTrackCount;
+        }
         // i have yet to find an album without a genre attached, but this may still break at some point
         track.Tag.Genres = publicAlbum["genres"]!["data"]!.Select(a => a["name"]!.ToString()).ToArray();
 
@@ -440,6 +476,21 @@ public class Downloader
         }
 
         track.Save();
+    }
+
+    // reads the year from a yyyy-MM-dd date, treating 0000 and anything unparseable as missing
+    internal static uint? ParseYear(JToken? date)
+    {
+        string? value = date?.ToString();
+        if (value == null || value.Length < 4)
+            return null;
+
+        return uint.TryParse(value.AsSpan(0, 4), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out uint year) && year > 0 ? year : null;
+    }
+
+    private static uint? ParsePositive(JToken? number)
+    {
+        return uint.TryParse(number?.ToString(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out uint value) && value > 0 ? value : null;
     }
 
     private List<SyncLyrics> ParseSyncedLyrics(string syncedLyrics)
