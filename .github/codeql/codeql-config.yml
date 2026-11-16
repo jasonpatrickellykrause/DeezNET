@@ -1,0 +1,12 @@
+name: DeezNET CodeQL config
+
+# security-extended adds lower-precision security queries on top of the defaults
+queries:
+  - uses: security-extended
+
+# the library and CLI ship; tests don't
+paths:
+  - DeezNET
+  - DeezCLI
+paths-ignore:
+  - DeezNET.Tests
