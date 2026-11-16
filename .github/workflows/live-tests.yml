@@ -1,0 +1,41 @@
+name: Live Tests
+on:
+  # run by hand from the Actions tab
+  workflow_dispatch:
+  schedule:
+    # weekly, to catch Deezer changing an endpoint or data these tests depend on
+    - cron: '41 6 * * 1'
+  pull_request:
+    # only when this workflow or the code the live tests cover changes; the build workflow covers everything else
+    paths:
+      - .github/workflows/live-tests.yml
+      - DeezNET/DeezerURL.cs
+      - DeezNET.Tests/DeezerURLTests.cs
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+  DOTNET_VERSION: 8.0.405
+
+jobs:
+  live:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Pin the SDK
+        run: |
+          echo '{"sdk":{"version": "${{ env.DOTNET_VERSION }}"}}' > ./global.json
+      - name: Run live tests
+        # these call Deezer's public API without an ARL; each failing case is listed in the log
+        run: dotnet test DeezNET.Tests -c Release --filter "Category=Live" --logger "console;verbosity=normal"

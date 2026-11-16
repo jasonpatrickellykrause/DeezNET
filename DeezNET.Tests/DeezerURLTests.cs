@@ -58,15 +58,12 @@ namespace DeezNET.Tests
             unshort.ShouldBe(expected);
         }
 
-        // it's very possible for the Artist and ArtistTop values to change later
         // calls Deezer, so CI skips it with --filter "Category!=Live"
         [Trait("Category", "Live")]
         [Theory]
         [InlineData("https://www.deezer.com/en/track/13787884", new long[] { 13787884 })]
         [InlineData("https://www.deezer.com/en/album/509603971", new long[] { 2531592621, 2531592631, 2531592641, 2531592651, 2531592661 })]
         [InlineData("https://www.deezer.com/en/playlist/12668949561", new long[] { 2664944792, 856599752, 134784964 })]
-        [InlineData("https://www.deezer.com/en/artist/11696461", new long[] { 938758732, 938758742, 938758752, 938758762, 938758772, 938758782, 938758792, 938758802, 938758812, 938758822, 140025373 })]
-        [InlineData("https://www.deezer.com/en/artist/11696461/top_track", new long[] { 140025373 })]
         public async Task GetAssociatedTracksTest(string url, long[] associatedTracks)
         {
             DeezerClient cli = new();
@@ -75,6 +72,24 @@ namespace DeezNET.Tests
             long[] actualTracks = await data.GetAssociatedTracks(cli);
 
             actualTracks.ShouldBeEquivalentTo(associatedTracks);
+        }
+
+        // an artist's catalogue and top tracks grow as they release more, so only check that known tracks are still included
+        // calls Deezer, so CI skips it with --filter "Category!=Live"
+        [Trait("Category", "Live")]
+        [Theory]
+        [InlineData("https://www.deezer.com/en/artist/11696461", new long[] { 938758732, 938758742, 938758752, 938758762, 938758772, 938758782, 938758792, 938758802, 938758812, 938758822, 140025373 })]
+        [InlineData("https://www.deezer.com/en/artist/11696461/top_track", new long[] { 140025373 })]
+        public async Task GetAssociatedArtistTracksTest(string url, long[] includedTracks)
+        {
+            DeezerClient cli = new();
+            var data = DeezerURL.Parse(url);
+
+            long[] actualTracks = await data.GetAssociatedTracks(cli);
+
+            actualTracks.ShouldBeUnique();
+            foreach (long track in includedTracks)
+                actualTracks.ShouldContain(track);
         }
     }
 }
