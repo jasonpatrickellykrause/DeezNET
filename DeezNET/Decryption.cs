@@ -31,7 +31,12 @@ internal static class Decryption
     /// <summary>
     /// Decodes a track stream without blocking, so a slow or stalled download can be cancelled.
     /// </summary>
+    /// <param name="input">The encrypted track data.</param>
+    /// <param name="output">The stream to write the decoded track to.</param>
+    /// <param name="isCrypted">Whether the track data is encrypted.</param>
+    /// <param name="blowfishKey">The track's Blowfish key.</param>
     /// <param name="readTimeout">The longest to wait for more data before giving up with a <see cref="TimeoutException"/>. Null waits indefinitely.</param>
+    /// <param name="token">Cancels the operation.</param>
     public static async Task DecodeTrackStreamAsync(Stream input, Stream output, bool isCrypted, string blowfishKey, TimeSpan? readTimeout = null, CancellationToken token = default)
     {
         bool isStart = true;
