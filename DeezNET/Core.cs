@@ -38,7 +38,8 @@ public class DeezerClient
 
         _arl = arl;
         _gwApi._arl = arl;
-        await _gwApi.SetToken();
+        // a new ARL needs its own session even if a refresh for the old one just finished
+        await _gwApi.SetToken(force: true);
     }
 
     public Downloader Downloader { get => _downloader; }

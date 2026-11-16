@@ -287,9 +287,13 @@ public class Downloader
         if (_gw.ActiveUserData == null)
             await _gw.SetToken(cancelToken);
 
+        // SetToken does nothing without an ARL, which used to surface as a NullReferenceException below
+        JToken userData = _gw.ActiveUserData ?? throw new InvalidARLException("Downloading requires an ARL. Call DeezerClient.SetARL first.");
+        long tokenVersion = _gw.TokenVersion;
+
         GetUrlRequestBody reqData = new()
         {
-            LicenseToken = _gw.ActiveUserData!["USER"]!["OPTIONS"]!["license_token"]!.ToString(),
+            LicenseToken = userData["USER"]!["OPTIONS"]!["license_token"]!.ToString(),
             TrackTokens = [token],
             Media =
             [
@@ -328,7 +332,7 @@ public class Downloader
             // the license token lives in the user data and expires; refresh it once before giving up
             if (!isRetry)
             {
-                await _gw.SetToken(cancelToken);
+                await _gw.SetToken(cancelToken, staleVersion: tokenVersion);
                 return await GetTrackUrl(token, bitrate, cancelToken, true);
             }
 
