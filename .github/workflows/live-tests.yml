@@ -6,9 +6,11 @@ on:
     # weekly, to catch Deezer changing an endpoint or data these tests depend on
     - cron: '41 6 * * 1'
   pull_request:
-    # only when this workflow changes; the build workflow covers everything else
+    # only when this workflow or the code the live tests cover changes; the build workflow covers everything else
     paths:
       - .github/workflows/live-tests.yml
+      - DeezNET/DeezerURL.cs
+      - DeezNET.Tests/DeezerURLTests.cs
 
 permissions:
   contents: read
