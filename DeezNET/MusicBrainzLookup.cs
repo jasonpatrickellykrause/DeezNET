@@ -14,7 +14,7 @@ public class MusicBrainzLookup
     public MusicBrainzLookup(HttpClient? client = null, string? userAgent = null)
     {
         _client = client ?? new HttpClient();
-        _userAgent = userAgent ?? "DeezNET/1.2.4 (https://github.com/jasonpatrickellykrause/DeezNET)";
+        _userAgent = userAgent ?? "DeezNET/1.2.5 (https://github.com/jasonpatrickellykrause/DeezNET)";
     }
 
     /// <summary>

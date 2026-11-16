@@ -363,7 +363,10 @@ public class PublicApi
     public async Task<JToken> SearchUser(string query, bool strict = false, SearchOrder? order = null, int index = 0, int limit = 25, CancellationToken token = default)
         => await Call("search/user", PublicApi.GenerateSearchArgs(query, strict, order, index, limit), token);
 
-    private async Task<JToken> Call(string method, Dictionary<string, string>? parameters = null, CancellationToken token = default)
+    private const int MAX_QUOTA_RETRIES = 3;
+    private static readonly TimeSpan QUOTA_RETRY_DELAY = TimeSpan.FromSeconds(5);
+
+    private async Task<JToken> Call(string method, Dictionary<string, string>? parameters = null, CancellationToken token = default, int quotaRetries = 0)
     {
         parameters ??= [];
 
@@ -397,8 +400,12 @@ public class PublicApi
                     case 4:
                     case 700:
                         {
-                            await Task.Delay(5000, token);
-                            return await Call(method, parameters, token);
+                            // quota exceeded; retrying without a limit kept a caller waiting forever while Deezer kept refusing
+                            if (quotaRetries >= MAX_QUOTA_RETRIES)
+                                throw new APIException($"Deezer's public API refused {method} with error {err} after {MAX_QUOTA_RETRIES} retries: {message}");
+
+                            await Task.Delay(QUOTA_RETRY_DELAY, token);
+                            return await Call(method, parameters, token, quotaRetries + 1);
                         }
                     case 100:
                         throw new ItemsLimitExceededException(message ?? "");
