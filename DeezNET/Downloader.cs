@@ -41,9 +41,12 @@ public class Downloader
     {
         MemoryStream outStream = new();
 
-        var (stream, blowfishKey, isCrypted) = await GetEncryptedTrackData(trackId, bitrate, fallback, token);
+        var (stream, blowfishKey, isCrypted, contentLength) = await GetEncryptedTrackData(trackId, bitrate, fallback, token);
         using (stream)
-            await Decryption.DecodeTrackStreamAsync(stream, outStream, isCrypted, blowfishKey, ReadTimeout, token);
+        {
+            long received = await Decryption.DecodeTrackStreamAsync(stream, outStream, isCrypted, blowfishKey, ReadTimeout, token);
+            Decryption.EnsureComplete(received, contentLength, trackId);
+        }
 
         outStream.Seek(0, SeekOrigin.Begin);
         return outStream;
@@ -74,12 +77,13 @@ public class Downloader
     public async Task WriteRawTrackToFile(long trackId, string trackPath, Bitrate bitrate, Bitrate? fallback = null, CancellationToken token = default)
     {
         // fetch first so a failed request doesn't leave an empty file behind
-        var (stream, blowfishKey, isCrypted) = await GetEncryptedTrackData(trackId, bitrate, fallback, token);
+        var (stream, blowfishKey, isCrypted, contentLength) = await GetEncryptedTrackData(trackId, bitrate, fallback, token);
 
         using (stream)
         {
             using FileStream fileStream = new(trackPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, useAsync: true);
-            await Decryption.DecodeTrackStreamAsync(stream, fileStream, isCrypted, blowfishKey, ReadTimeout, token);
+            long received = await Decryption.DecodeTrackStreamAsync(stream, fileStream, isCrypted, blowfishKey, ReadTimeout, token);
+            Decryption.EnsureComplete(received, contentLength, trackId);
         }
     }
 
@@ -246,7 +250,7 @@ public class Downloader
         return string.Format(CDN_TEMPLATE, id, resolution);
     }
 
-    private async Task<(Stream stream, string blowfishKey, bool isCrypted)> GetEncryptedTrackData(long trackId, Bitrate bitrate, Bitrate? fallback = null, CancellationToken token = default)
+    private async Task<(Stream stream, string blowfishKey, bool isCrypted, long? contentLength)> GetEncryptedTrackData(long trackId, Bitrate bitrate, Bitrate? fallback = null, CancellationToken token = default)
     {
         JToken page = await _gw.GetTrackPage(trackId, token);
         TrackUrls urls = await GetTrackUrl(page["DATA"]!["TRACK_TOKEN"]!.ToString(), bitrate, token);
@@ -282,7 +286,8 @@ public class Downloader
         string blowfishKey = Decryption.GenerateBlowfishKey(trackId.ToString());
         bool isCrypted = encryptedUri.ToString().Contains("/mobile/") || encryptedUri.ToString().Contains("/media/");
 
-        return (stream, blowfishKey, isCrypted);
+        // null when the CDN sends no Content-Length (a chunked response), which skips the completeness check
+        return (stream, blowfishKey, isCrypted, response.Content.Headers.ContentLength);
     }
 
     private async Task<TrackUrls> GetTrackUrl(string token, Bitrate bitrate, CancellationToken cancelToken = default, bool isRetry = false)
