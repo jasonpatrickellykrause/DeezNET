@@ -1,4 +1,5 @@
 using System.Text;
+using DeezNET.Exceptions;
 using Org.BouncyCastle.Crypto;
 using Org.BouncyCastle.Crypto.Engines;
 using Org.BouncyCastle.Crypto.Modes;
@@ -118,6 +119,44 @@ namespace DeezNET.Tests
             await Decryption.DecodeTrackStreamAsync(stream, outStream, true, Key, TimeSpan.FromSeconds(5));
 
             outStream.ToArray().ShouldBe(track);
+        }
+
+        [Fact]
+        public async Task DecodeTrackStreamAsyncReturnsBytesReadTest()
+        {
+            // the encrypted input, which is what Content-Length counts, not the decoded output
+            byte[] encrypted = Encrypt(Track(6144 * 2 + 100), Key);
+            using ShortReadStream stream = new(encrypted);
+            using MemoryStream outStream = new();
+
+            long received = await Decryption.DecodeTrackStreamAsync(stream, outStream, true, Key, TimeSpan.FromSeconds(5));
+
+            received.ShouldBe(encrypted.Length);
+        }
+
+        [Fact]
+        public async Task DecodeTrackStreamAsyncTruncatedBodyIsCaughtTest()
+        {
+            // a connection closed early looks like the end of the stream; only the length shows the track is short
+            byte[] encrypted = Encrypt(Track(6144 * 3), Key);
+            using MemoryStream stream = new(encrypted[..(6144 + 1000)]);
+            using MemoryStream outStream = new();
+
+            long received = await Decryption.DecodeTrackStreamAsync(stream, outStream, true, Key, TimeSpan.FromSeconds(5));
+
+            Should.Throw<IncompleteTrackException>(() => Decryption.EnsureComplete(received, encrypted.Length, 42))
+                .Message.ShouldContain("ended after 7144 of 18432 bytes");
+        }
+
+        [Theory]
+        [InlineData(100, 100L)]
+        [InlineData(100, null)]
+        [InlineData(100, 0L)]
+        [InlineData(150, 100L)]
+        public void EnsureCompleteAllowsTest(long received, long? expected)
+        {
+            // a matching length, no Content-Length, or more than expected
+            Should.NotThrow(() => Decryption.EnsureComplete(received, expected, 42));
         }
 
         [Fact]

@@ -5,6 +5,7 @@ using Org.BouncyCastle.Crypto;
 using Org.BouncyCastle.Security;
 using System.Security.Cryptography;
 using System.Text;
+using DeezNET.Exceptions;
 
 namespace DeezNET;
 
@@ -37,19 +38,38 @@ internal static class Decryption
     /// <param name="blowfishKey">The track's Blowfish key.</param>
     /// <param name="readTimeout">The longest to wait for more data before giving up with a <see cref="TimeoutException"/>. Null waits indefinitely.</param>
     /// <param name="token">Cancels the operation.</param>
-    public static async Task DecodeTrackStreamAsync(Stream input, Stream output, bool isCrypted, string blowfishKey, TimeSpan? readTimeout = null, CancellationToken token = default)
+    /// <returns>The number of bytes read from <paramref name="input"/>, to compare with the size the server reported.</returns>
+    public static async Task<long> DecodeTrackStreamAsync(Stream input, Stream output, bool isCrypted, string blowfishKey, TimeSpan? readTimeout = null, CancellationToken token = default)
     {
         bool isStart = true;
+        long totalRead = 0;
 
         int bytesRead;
         byte[] buffer = new byte[BLOCK_SIZE];
         while ((bytesRead = await ReadBlockAsync(input, buffer, readTimeout, token)) > 0)
         {
+            totalRead += bytesRead;
+
             int offset = DecodeBlock(buffer, bytesRead, isCrypted, blowfishKey, isStart);
             isStart = false;
 
             await output.WriteAsync(buffer.AsMemory(offset, bytesRead - offset), token);
         }
+
+        return totalRead;
+    }
+
+    /// <summary>
+    /// Throws when fewer bytes arrived than the server said it would send. A connection closed partway can end the body
+    /// like a normal finish, and a FLAC cut short still reports its full length in its header, so nothing else notices.
+    /// </summary>
+    /// <param name="received">The bytes read from the response body.</param>
+    /// <param name="expected">The response's Content-Length, or null when the server didn't send one.</param>
+    /// <param name="trackId">The track, for the error message.</param>
+    public static void EnsureComplete(long received, long? expected, long trackId)
+    {
+        if (expected is > 0 && received < expected)
+            throw new IncompleteTrackException($"Track ID {trackId} ended after {received} of {expected} bytes. The connection to the Deezer CDN closed early.");
     }
 
     // Decrypts the block in place and returns where its audio starts.
